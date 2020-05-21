@@ -33,7 +33,7 @@ library(tidyr)
 library(stringr)
 library(matrixStats)
 library(genefilter)
-library(openxlsx)
+
 
 
 ############
@@ -90,9 +90,10 @@ P1 # cell lines are differentiated by second component!
 
 
 ### look at log intensity on boxplot from oligo package
+set.seed(542)
 oligo::boxplot(celData, target = "core", main = "log2-intensities of raw data")  # different median and scale of the boxes: needs normalization
 
-# advanced plots  (The report will be written into directory 'C:\Users\muham\AppData\Local\Temp\RtmpmAXYHe'.)
+# advanced plots  
 arrayQualityMetrics(expressionset = celData, outdir = tempdir(),
                     force = TRUE, do.logtransform = TRUE, intgroup = c("Cells", "Treatments"))
 
@@ -119,6 +120,7 @@ eset_norm <- rma(celData)
 
 
 ### quality assessment boxplot
+set.seed(754)
 oligo::boxplot(eset_norm, target = "core", main = "log2-intensities of normalized data")
 
 ### quality assessment PCA plot

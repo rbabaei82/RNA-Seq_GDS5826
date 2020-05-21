@@ -1,0 +1,300 @@
+---
+title: "Carfilzomib_resistance"
+author: "rbabaei"
+date: "5/21/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F, cache = T)
+library(Biobase)
+library(oligoClasses)
+
+#Annotation
+library(hgu133plus2.db)
+
+
+#Quality control and pre-processing packages
+library(oligo)
+library(arrayQualityMetrics)
+
+#Analysis and statistics packages
+library(limma)
+library(topGO)
+library(ReactomePA)
+library(clusterProfiler)
+
+#Plotting and color options packages
+library(ggplot2)
+library(geneplotter)
+library(RColorBrewer)
+library(pheatmap)
+
+#Formatting/documentation packages
+library(dplyr)
+library(tidyr)
+
+#Helpers:
+library(stringr)
+library(matrixStats)
+library(genefilter)
+```
+
+## Introduction
+The aquired resistance of multiple myeloma model cell lines (KMS11 and KMS34) to anti cancer agent Carfilzomib has been studied by Riz I et.al. The article has been published in Oncotarget (PMID: 26109433). The KMS11 and KMS34 cells have been cultured in the presence of Carfilzomib and their gene expression profiles have been compared to the parental cells. Here we will analyze the microarray data of this study, which is accessible on GEO data set under GDS5826.
+
+
+## Data importing and tidying
+The CEL format of data is downloaded from GEO. First we are going to load the data into console and modify some annotation according to our needs.
+
+```{r data}
+celPath <- "D:/DataScience/Profile/MultipleMyeloma_GPL570/celFiles"
+
+celList <- list.files(celPath, full.names = T)
+celData <- read.celfiles(celList)
+rm(celPath, celList)
+```
+
+We need to rename the samples according to the expriment design. We will also add some annotation to data, which we will need later for statistical analysis.
+
+```{r addPheno}
+colnames(celData)<- c("KMS11.Cfz.1", "KMS11.Cfz.2","KMS11.Cfz.3","KMS34.Cfz.1","KMS34.Cfz.2","KMS34.Cfz.3",
+                 "KMS11.1","KMS11.2","KMS11.3","KMS34.1","KMS34.2","KMS34.3")
+# phenodata
+ph <- celData@phenoData
+
+ph@data[,2] <- c("KMS.11.Cfz","KMS.11.Cfz","KMS.11.Cfz","KMS.34.Cfz","KMS.34.Cfz","KMS.34.Cfz", "KMS.11","KMS.11","KMS.11","KMS.34","KMS.34","KMS.34")
+colnames(ph@data)[2] <- "Groups"
+
+ph@data[,3] <- c("KMS11","KMS11","KMS11","KMS34","KMS34","KMS34", "KMS11","KMS11","KMS11","KMS34","KMS34","KMS34")
+colnames(ph@data)[3] <- "CellLine"
+
+ph@data[,4] <- c("Cfz", "Cfz", "Cfz", "Cfz", "Cfz", "Cfz", "Ctrl", "Ctrl", "Ctrl", "Ctrl", "Ctrl", "Ctrl")
+colnames(ph@data)[4] <- "Treatment"
+```
+
+## Quality Control
+Before any kind of analysis, we should be sure about the quality of the data. We will apply some quality control tests and visualize them for better understanding of the data.
+Principal component analysis will let us know whether samples are separated in an expected way. Samples belonging to one groupe of cell types or treatment should be separated via principal components. 
+
+```{r qualityPCA}
+# take log2 of expression and perform a PCA 
+exp_raw <- log2(exprs(celData))
+PCA_raw <- prcomp(t(exp_raw), sacle. = FALSE)
+
+percentVar <- round(100*PCA_raw$sdev^2/sum(PCA_raw$sdev^2),1)
+sd_ratio <- sqrt(percentVar[2]/percentVar[1])
+
+ggData <- data.frame(PC1 = PCA_raw$x[,1],
+                     PC2 = PCA_raw$x[,2],
+                     Cells = ph@data$CellLine,
+                     Treatment = ph@data$Treatment)
+
+ggplot(ggData, aes(PC1, PC2)) + geom_point(aes(shape = Cells, colour = Treatment))+
+  ggtitle("PCA of log_transformed raw expression data") + xlab(paste0("PC1, VarExp:", percentVar[1], "%")) +
+  ylab(paste0("PC2, VarExp:", percentVar[2], "%")) + theme(plot.title = element_text(hjust = 0.5)) +
+  coord_fixed(ratio = sd_ratio) + scale_shape_manual(values = c(4,15)) + scale_color_manual(values = c("darkorange2", "dodgerblue4"))
+rm(exp_raw, PCA_raw, percentVar, sd_ratio, ggData)
+```
+
+As shown above, two cell types are separated by second principal component, which could be problematic for further analysis. 
+To have a closer look at the quality we can draw a boxplot of log intensity of expressions.
+
+```{r qualityBoxplot}
+set.seed(521)
+oligo::boxplot(celData, target = "core", main = "log2-intensities of raw data")
+```
+
+The boxplot shows different median and scale of the boxes, meaning the need of normalization.
+Before normalization we perform another quality control test, called relative log expression (RLE). 
+
+```{r RLE}
+pData(celData)[,1] <- c("KMS.11.Cfz","KMS.11.Cfz","KMS.11.Cfz","KMS.34.Cfz","KMS.34.Cfz","KMS.34.Cfz", "KMS.11","KMS.11","KMS.11","KMS.34","KMS.34","KMS.34")
+pData(celData)[,2] <- c("KMS11","KMS11","KMS11","KMS34","KMS34","KMS34", "KMS11","KMS11","KMS11","KMS34","KMS34","KMS34")
+pData(celData)[,3] <- c("Cfz", "Cfz", "Cfz", "Cfz", "Cfz", "Cfz", "Ctrl", "Ctrl", "Ctrl", "Ctrl", "Ctrl", "Ctrl")
+names(celData@phenoData@data) <- c("Groups", "Cells", "Treatments")
+
+rleData <- rma(celData, normalize = FALSE) # without normalization to get only log2 values
+
+# The RLE is performed by calculating the median log2 intensity of every transcript across all arrays.
+row_medians <- Biobase::rowMedians(as.matrix(exprs(rleData)))
+
+#We then substract this transcript median intensity from every transcript intensity via the sweep function.
+RLE_Data <- sweep(exprs(rleData), 1, row_medians)
+RLE_Data <- as.data.frame(RLE_Data)
+
+Rle_Data_gathered <- gather(RLE_Data, Treatment, log2_expression_deviation)
+
+ggplot(Rle_Data_gathered, aes(Treatment, log2_expression_deviation)) +
+  geom_boxplot(outlier.shape = NA) + ylim(c(-2,2)) + 
+  theme(axis.text.x = element_text(colour = "darkgreen", angle = 60, size = 6.5, hjust = 1, face = "bold"))
+
+rm(RLE_Data, Rle_Data_gathered, rleData, row_medians)
+```
+
+
+The boxes with larger extension indicate high deviation from the median. The boxes shifted in y-direction indicate systematically high or lower expression, due to quality issues or batch effects.
+
+## Normalization
+Now we will apply RMA algorithm for background correction and normalization.
+
+```{r rma}
+eset_norm <- rma(celData)
+set.seed(754)
+oligo::boxplot(eset_norm, target = "core", main = "log2-intensities of normalized data")
+```
+
+The boxplot above shows that RMA algorithm has done a good job in normalizing the data. We can prove it by PCA plot.
+
+```{r normPCA}
+norm_exp <- exprs(eset_norm)
+PCA <- prcomp(t(norm_exp), scale. = F)
+percentVar <- round(100*PCA$sdev^2/sum(PCA$sdev^2),1)
+sd_ratio <- sqrt(percentVar[2]/percentVar[1])
+ggData <- data.frame(PC1 = PCA$x[,1],
+                     PC2 = PCA$x[,2],
+                     Cells = pData(eset_norm)$Cells,
+                     Treatment = pData(eset_norm)$Treatment)
+
+ggplot(ggData, aes(PC1, PC2)) +
+  geom_point(aes(shape = Cells, colour = Treatment)) + 
+  ggtitle("PCA plot of normalized data") + 
+  xlab(paste0("PC1, VarExp:", percentVar[1], "%")) +
+  ylab(paste0("PC2, VarExp:", percentVar[2], "%")) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_fixed(ratio = sd_ratio) + 
+  scale_shape_manual(values = c(4,15)) +
+  scale_color_manual(values = c("darkorange2", "dodgerblue4"))
+rm(norm_exp, PCA, percentVar, sd_ratio, ggData)
+```
+
+After normalization, the cell types are separated by first principal component. 
+
+
+## Filtering
+Next, we will exclude the lowly expressed genes. To this aim, we will calculate row-wise medians of gene expression intensity. Then we will set a cutoff to to remove the defined expressions.
+
+```{r histFilter}
+eset_medians <- rowMedians(exprs(eset_norm))
+hist(eset_medians, 100, col = "cornsilk1", freq = FALSE,
+     main = "Histogram of the median intensities",
+     border = "antiquewhite4", xlab = "Median intensities")
+# set cutoff threshold left to the histogram peak
+cut_thereshold <- 4
+abline(v=cut_thereshold, col = "coral4", lwd = 2)
+```
+
+We can exlude the low medians, which are enriched on the left hand side of the histogram.
+
+
+```{r filtering}
+idx_cut_threshold <- apply(exprs(eset_norm), 1, function(x){
+  sum(x>cut_thereshold) >= 3}) # number of arrays where the median intesity passes the threshold is greater than the sample cutoff(we have 3 samples per replicate)
+
+table(idx_cut_threshold) # 3437 arrays can be removed
+
+eset_norm_filtered <- subset(eset_norm, idx_cut_threshold)
+
+rm(cut_thereshold, eset_medians, idx_cut_threshold)
+```
+
+To perform differntial expression analysis, we need first to add some more annotation information to featureData of our expression set.
+
+
+```{r annotation}
+anno_eset <- AnnotationDbi::select(hgu133plus2.db, keys = (featureNames(eset_norm_filtered)),
+                                   columns = c("SYMBOL", "GENENAME"),
+                                   keytype = "PROBEID")
+anno_eset <- subset(anno_eset, !is.na(SYMBOL)) # filterout probes that do not map to a gene
+```
+
+Many transcript identifiers are mapped to multiple gene symbols, which we are going to remove.
+First we filter the Probe Ids with multiple matches. Then we subset the expression set based on filtered probe IDs. We will also remove the corresponding IDs from annotation set. Finaly we will merge the expression set and annotation set to get a final set to work with.
+
+```{r multMapping}
+anno_grouped <- group_by(anno_eset, PROBEID)
+anno_summarized <- summarize(anno_grouped, no_of_matches = n_distinct(SYMBOL))
+
+
+anno_filtered <- filter(anno_summarized, no_of_matches > 1) # filter for PROBEIDs with multiple matches
+head(anno_filtered)
+nrow(anno_filtered) # 2157 PROBEID with multiple matches, difficult to decide which mapping is correct. Therefoe we exclude these clusters
+
+
+ids_to_exclude <- (featureNames(eset_norm_filtered) %in% anno_filtered$PROBEID)
+table(ids_to_exclude)
+
+# subset to final eset
+eset_final <- subset(eset_norm_filtered, !ids_to_exclude)
+validObject(eset_final)# TRUE
+
+# we should also remove probe IDs from anno_eset 
+head(anno_eset)
+
+# first we store feature data in eset_final, defining PROBEID column
+fData(eset_final)$PROBEID <- rownames(fData(eset_final))
+
+# left_join anno_eset
+fData(eset_final) <- left_join(fData(eset_final), anno_eset)
+
+# restore row names
+rownames(fData(eset_final)) <- fData(eset_final)$PROBEID
+validObject(eset_final)
+
+rm(anno_eset, anno_filtered, anno_grouped, anno_summarized, eset_norm, eset_norm_filtered, ids_to_exclude)
+```
+
+## Differential Gene Expression
+As we see in exprimental design, two cell lines have been treated with anti cancer drug. Therefor we should consider two factors affecting the outcomes:
+1. Cell types: KMS11 and KMS34
+2. Treatment: control vs. Carfilzomib
+
+One can do a joint model of differential expression analysis, but the result could be affected by two factors. As we could see before the main difference in expression pattern is coming from the type of the cells.
+
+We will create two design matrices, one for each cell line. Then we will explore the differential gene expression separately for each cell line.
+
+```{r DE}
+Groups <- as.character(pData(eset_final)$Groups)
+Cells <- as.character(pData(eset_final)$Cells)
+Treatment <- as.character(pData(eset_final)$Treatment)
+
+# according to the original paper we look for the changes in transcription occur between treatments. we create two designe matrices one for each cell line
+
+i_11 <- Groups[Cells == "KMS11"]
+design_eset_11 <- model.matrix(~ 0 + Treatment[Cells == "KMS11"] + i_11)
+colnames(design_eset_11)[1:2] <- c("Cfz", "Ctrl")
+rownames(design_eset_11) <- i_11
+
+
+
+i_34 <-  Groups[Cells == "KMS34"]
+design_eset_34 <- model.matrix(~ 0 + Treatment[Cells == "KMS34"] + i_34)
+colnames(design_eset_34)[1:2] <- c("Cfz", "Ctrl")
+rownames(design_eset_34) <- i_34
+
+
+
+
+contrast_matrix_11 <- makeContrasts(Cfz-Ctrl, levels = design_eset_11)
+eset_fit_11 <- eBayes(contrasts.fit(lmFit(eset_final[,Cells =="KMS11"],
+                                          design = design_eset_11),
+                                    contrast_matrix_11))
+
+
+contrast_matrix_34 <- makeContrasts(Cfz-Ctrl, levels = design_eset_34)
+eset_fit_34 <- eBayes(contrasts.fit(lmFit(eset_final[,Cells =="KMS34"],
+                                          design = design_eset_34),
+                                    contrast_matrix_34))
+
+rm(design_eset_11, design_eset_34, contrast_matrix_11, contrast_matrix_34)
+
+table_11 <- topTable(eset_fit_11, number = Inf)
+head(table_11)
+
+
+table_34 <- topTable(eset_fit_34, number = Inf)
+head(table_34)
+```
+
+### volcano plot and heatmap
+
