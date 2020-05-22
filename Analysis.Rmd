@@ -280,21 +280,229 @@ eset_fit_11 <- eBayes(contrasts.fit(lmFit(eset_final[,Cells =="KMS11"],
                                           design = design_eset_11),
                                     contrast_matrix_11))
 
+volcano_names <- ifelse(abs(eset_fit_11$coefficients)>=1,
+                        eset_fit_11$genes$SYMBOL, NA)
+volcanoplot(eset_fit_11, style = "p-value", highlight = 10, names = volcano_names, main = "KMS11 Cfs vs. Ctrl",
+            xlab = "Log2 Fold Change", ylab = NULL, pch = 16, cex = 0.35)
+```
+
+```{r DE2}
 
 contrast_matrix_34 <- makeContrasts(Cfz-Ctrl, levels = design_eset_34)
 eset_fit_34 <- eBayes(contrasts.fit(lmFit(eset_final[,Cells =="KMS34"],
                                           design = design_eset_34),
                                     contrast_matrix_34))
 
-rm(design_eset_11, design_eset_34, contrast_matrix_11, contrast_matrix_34)
+volcano_names <- ifelse(abs(eset_fit_34$coefficients)>=1,
+                        eset_fit_34$genes$SYMBOL, NA)
+volcanoplot(eset_fit_34, style = "p-value", highlight = 10, names = volcano_names,main = "KMS34 Cfz vs. Ctrl",
+            xlab = "Log2 Fold Change", ylab = NULL, pch = 16, cex = 0.35)
 
-table_11 <- topTable(eset_fit_11, number = Inf)
-head(table_11)
+rm(design_eset_11, design_eset_34, contrast_matrix_11, contrast_matrix_34, volcano_names)
 
 
-table_34 <- topTable(eset_fit_34, number = Inf)
-head(table_34)
 ```
 
-### volcano plot and heatmap
+we will set another cutoff, this time for genes with FDR < 5%, and select the top 50 genes. Then we will look for the ones that are listed in both cell lines.
 
+```{r filterFDR}
+table_11 <- topTable(eset_fit_11, number = Inf)
+table_11 <- table_11[order(table_11$adj.P.Val),]
+
+selected_11 <- subset(table_11, adj.P.Val < 0.05)$PROBEID
+eset_11 <- eset_final[selected_11,]
+table_11[1:20,]
+```
+
+
+```{r FDR34}
+table_34 <- topTable(eset_fit_34, number = Inf)
+table_34 <- table_34[order(table_34$adj.P.Val),]
+
+selected_34 <- subset(table_34, adj.P.Val < 0.05)$PROBEID
+eset_34 <- eset_final[selected_34,]
+table_34[1:20,]
+
+shared_genes <- selected_11[c(which(selected_11 %in% selected_34))]
+shared_DE <-AnnotationDbi::select(hgu133plus2.db, keys = (shared_genes),
+                      columns = c("SYMBOL", "GENENAME"),
+                      keytype = "PROBEID")
+dim(shared_DE)
+shared_DE[1:10,]
+```
+
+189 genes are differentially expressed under Carfilzomib treatmnet (aquired resistance) in both cell lines. Top 10 of them are printed above.
+
+Now, we will draw a heatmap for differentially expressed gene in each set.
+
+```{r heatmap11}
+heat_table <- table_11[1:50,]
+heat_ID <- heat_table$PROBEID
+heat_set <- eset_final[heat_ID,]
+exprs_11 <- exprs(heat_set)
+row.names(exprs_11) <- heat_table$SYMBOL
+
+
+pheatmap(exprs_11,
+         annotation_col = heat_set@phenoData@data[,c("Cells", "Treatments")],
+         scale = "row",
+         cutree_rows = 4, cutree_cols = 4,
+         main = "Clustering heatmap of KMS11 Cfz vs. Ctrl")
+rm(exprs_11)
+```
+
+```{r heatmap34}
+heat_table <- table_34[1:50,]
+heat_ID <- heat_table$PROBEID
+heat_set <- eset_final[heat_ID,]
+exprs_34 <- exprs(heat_set)
+row.names(exprs_34) <- heat_table$SYMBOL
+
+
+pheatmap(exprs_34,
+         annotation_col = heat_set@phenoData@data[,c("Cells", "Treatments")],
+         scale = "row",
+         cutree_rows = 4, cutree_cols = 4,
+         main = "Clustering heatmap of KMS34 Cfz vs. Ctrl")
+rm(heat_table, heat_ID, heat_set, exprs_34)
+```
+
+## GO Enrichment Analysis
+Now we can do some enrichment analysis of DE genes, base on gene ontology. 
+First we find a set of background genes which are similar in expression to DE genes, and look at their distribution to avoid the biased background.
+
+```{r backGenes}
+back_genes_id11 <- genefinder(eset_final, as.character(selected_11), method = "manhattan", scale = "none")
+back_genes_id11 <- sapply(back_genes_id11, function(x)x$indices)
+
+back_genes_id34 <- genefinder(eset_final, as.character(selected_34), method = "manhattan", scale = "none")
+back_genes_id34 <- sapply(back_genes_id34, function(x)x$indices)
+
+
+back_genes11 <- featureNames(eset_final)[back_genes_id11]
+back_genes11 <- setdiff(back_genes11, selected_11)
+intersect(back_genes11, selected_11)
+length(back_genes11)
+
+
+back_genes34 <- featureNames(eset_final)[back_genes_id34]
+back_genes34 <- setdiff(back_genes34, selected_34)
+intersect(back_genes34, selected_34)
+length(back_genes34)
+```
+
+The intersect = 0 confirmes that the back_genes are not included in selected DE genes. 
+To check whether the background genes are not biased for the gene enrichment analysis, we will creat a multidensity plot, where the mean expression is plotted on the x-axis, and check for the similarity of the distribution of back-genes and fore-genes.
+
+```{r multiDensity_11}
+multidensity(list(
+  all = table_11[,"AveExpr"],
+  fore = table_11[selected_11, "AveExpr"],
+  back = table_11[rownames(table_11) %in% back_genes11, "AveExpr"]),
+  col = c("#e46981", "#ae7ee2", "#a7ad4a"),
+  xlab = "mean expression",
+  main = "DE genes for KMS11-background-matching")
+```
+
+```{r multiDensity_34}
+multidensity(list(
+  all = table_34[,"AveExpr"],
+  fore = table_34[selected_34, "AveExpr"],
+  back = table_34[rownames(table_34) %in% back_genes34, "AveExpr"]),
+  col = c("#e46981", "#ae7ee2", "#a7ad4a"),
+  xlab = "mean expression",
+  main = "DE genes for KMS11-background-matching")
+```
+
+The distribution of bak and fore-genes are similar in both sets. Now we can perform GO enrichment analysis.
+
+
+```{r topGO}
+gene_ID11 <- rownames(table_11)
+in_universe <- gene_ID11 %in% c(selected_11, back_genes11)
+in_selection <- gene_ID11 %in% selected_11
+
+all_genes11 <- in_selection[in_universe]
+all_genes11 <- factor(as.integer(in_selection[in_universe]))
+names(all_genes11) <- gene_ID11[in_universe]
+
+
+
+gene_ID34 <- rownames(table_34)
+in_universe <- gene_ID34 %in% c(selected_34, back_genes34)
+in_selection <- gene_ID34 %in% selected_34
+
+all_genes34 <- in_selection[in_universe]
+all_genes34 <- factor(as.integer(in_selection[in_universe]))
+names(all_genes34) <- gene_ID34[in_universe]
+
+## initialize topGO data set
+top_GO_data_11 <- new("topGOdata", ontology = "BP", allGenes = all_genes11,
+                      nodeSize = 10, annot = annFUN.db, affyLib = "hgu133plus2.db") # nodeSize=10 specifies a minimum size of GO category, categories with less than 10 genes are not included
+
+
+top_GO_data_34 <- new("topGOdata", ontology = "BP", allGenes = all_genes34,
+                      nodeSize = 10, annot = annFUN.db, affyLib = "hgu133plus2.db")
+
+
+### testing with Fisher classic and elim algorithm
+result11_topGO_elim <- runTest(top_GO_data_11, algorithm = "elim", statistic = "Fisher")
+result11_topGO_classic <- runTest(top_GO_data_11, algorithm = "classic", statistic = "Fisher")
+
+
+
+result34_topGO_elim <- runTest(top_GO_data_34, algorithm = "elim", statistic = "Fisher")
+result34_topGO_classic <- runTest(top_GO_data_34, algorithm = "classic", statistic = "Fisher")
+
+res_top_GO_11 <- GenTable(top_GO_data_11, Fisher.elim = result11_topGO_elim, Fisher.classic = result11_topGO_classic,
+                          orderBy = "Fisher.elim", topNodes = 20)
+genes_top_GO_11 <- printGenes(top_GO_data_11, whichTerms = res_top_GO_11$GO.ID, chip = "hgu133plus2.db", geneCutOff = 1000)
+
+res_top_GO_11$sig_genes <- sapply(genes_top_GO_11, function(x){
+  str_c(paste0(x[x$"raw p-value" == 2, "Symbol.id"], ";"), collapse = "")
+})
+
+
+res_top_GO_34 <- GenTable(top_GO_data_34, Fisher.elim = result34_topGO_elim, Fisher.classic = result34_topGO_classic,
+                          orderBy = "Fisher.elim", topNodes = 20)
+genes_top_GO_34 <- printGenes(top_GO_data_34, whichTerms = res_top_GO_34$GO.ID, chip = "hgu133plus2.db", geneCutOff = 1000)
+
+res_top_GO_34$sig_genes <- sapply(genes_top_GO_34, function(x){
+  str_c(paste0(x[x$"raw p-value" == 2, "Symbol.id"], ";"), collapse = "")
+})
+
+
+```
+
+Now we can look at top terms of GO analysis
+```{r GOplot}
+res_top_GO_11 %>% 
+     top_n(10, wt=1/as.numeric(Fisher.elim)) %>% 
+     mutate(hitsPerc=Significant*100/Annotated) %>% 
+     ggplot(aes(x=hitsPerc, 
+                y=Term, 
+                colour=Fisher.elim, 
+                size=Significant)) +
+     geom_point() +
+     expand_limits(x=0) +
+     labs(x="Hits (%)", y="GO term", colour="p value", size="Count") + ggtitle("GO terms for KMS11")
+```
+In KMS11, regulation of cellular amino acid and negative regulation of canonical Wnt signaling are at top.
+
+```{r GOplot34}
+res_top_GO_34 %>% 
+     top_n(10, wt=1/as.numeric(Fisher.elim)) %>% 
+     mutate(hitsPerc=Significant*100/Annotated) %>% 
+     ggplot(aes(x=hitsPerc, 
+                y=Term, 
+                colour=Fisher.elim, 
+                size=Significant)) +
+     geom_point() +
+     expand_limits(x=0) +
+     labs(x="Hits (%)", y="GO term", colour="p value", size="Count") + ggtitle("GO terms for KMS34")
+```
+In KMS34, negative regulation of IL6 and regulation of cellular response to IF gamma are at top.
+
+## Pathway enrichment analysis using reactom
+
+ 
