@@ -77,7 +77,7 @@ colnames(ph@data)[4] <- "Treatment"
 Before any kind of analysis, we should be sure about the quality of the data. We will apply some quality control tests and visualize them for better understanding of the data.
 Principal component analysis will let us know whether samples are separated in an expected way. Samples belonging to one groupe of cell types or treatment should be separated via principal components. 
 
-```{r qualityPCA}
+```{r qualityPCA, fig.align="center"}
 # take log2 of expression and perform a PCA 
 exp_raw <- log2(exprs(celData))
 PCA_raw <- prcomp(t(exp_raw), sacle. = FALSE)
@@ -100,7 +100,7 @@ rm(exp_raw, PCA_raw, percentVar, sd_ratio, ggData)
 As shown above, two cell types are separated by second principal component, which could be problematic for further analysis. 
 To have a closer look at the quality we can draw a boxplot of log intensity of expressions.
 
-```{r qualityBoxplot}
+```{r qualityBoxplot, fig.align="center"}
 set.seed(521)
 oligo::boxplot(celData, target = "core", main = "log2-intensities of raw data")
 ```
@@ -108,7 +108,7 @@ oligo::boxplot(celData, target = "core", main = "log2-intensities of raw data")
 The boxplot shows different median and scale of the boxes, meaning the need of normalization.
 Before normalization we perform another quality control test, called relative log expression (RLE). 
 
-```{r RLE}
+```{r RLE, fig.align="center"}
 pData(celData)[,1] <- c("KMS.11.Cfz","KMS.11.Cfz","KMS.11.Cfz","KMS.34.Cfz","KMS.34.Cfz","KMS.34.Cfz", "KMS.11","KMS.11","KMS.11","KMS.34","KMS.34","KMS.34")
 pData(celData)[,2] <- c("KMS11","KMS11","KMS11","KMS34","KMS34","KMS34", "KMS11","KMS11","KMS11","KMS34","KMS34","KMS34")
 pData(celData)[,3] <- c("Cfz", "Cfz", "Cfz", "Cfz", "Cfz", "Cfz", "Ctrl", "Ctrl", "Ctrl", "Ctrl", "Ctrl", "Ctrl")
@@ -138,7 +138,7 @@ The boxes with larger extension indicate high deviation from the median. The box
 ## Normalization
 Now we will apply RMA algorithm for background correction and normalization.
 
-```{r rma}
+```{r rma, fig.align="center"}
 eset_norm <- rma(celData)
 set.seed(754)
 oligo::boxplot(eset_norm, target = "core", main = "log2-intensities of normalized data")
@@ -146,7 +146,7 @@ oligo::boxplot(eset_norm, target = "core", main = "log2-intensities of normalize
 
 The boxplot above shows that RMA algorithm has done a good job in normalizing the data. We can prove it by PCA plot.
 
-```{r normPCA}
+```{r normPCA, fig.align="center"}
 norm_exp <- exprs(eset_norm)
 PCA <- prcomp(t(norm_exp), scale. = F)
 percentVar <- round(100*PCA$sdev^2/sum(PCA$sdev^2),1)
@@ -172,9 +172,9 @@ After normalization, the cell types are separated by first principal component.
 
 
 ## Filtering
-Next, we will exclude the lowly expressed genes. To this aim, we will calculate row-wise medians of gene expression intensity. Then we will set a cutoff to to remove the defined expressions.
+Next, we will exclude the lowly expressed genes. To this aim, we will calculate row-wise medians of gene expression intensity. Then we will set a cutoff to remove the defined expressions.
 
-```{r histFilter}
+```{r histFilter, fig.align="center"}
 eset_medians <- rowMedians(exprs(eset_norm))
 hist(eset_medians, 100, col = "cornsilk1", freq = FALSE,
      main = "Histogram of the median intensities",
@@ -253,7 +253,7 @@ One can do a joint model of differential expression analysis, but the result cou
 
 We will create two design matrices, one for each cell line. Then we will explore the differential gene expression separately for each cell line.
 
-```{r DE}
+```{r DE, fig.align="center"}
 Groups <- as.character(pData(eset_final)$Groups)
 Cells <- as.character(pData(eset_final)$Cells)
 Treatment <- as.character(pData(eset_final)$Treatment)
@@ -286,7 +286,7 @@ volcanoplot(eset_fit_11, style = "p-value", highlight = 10, names = volcano_name
             xlab = "Log2 Fold Change", ylab = NULL, pch = 16, cex = 0.35)
 ```
 
-```{r DE2}
+```{r DE2, fig.align="center"}
 
 contrast_matrix_34 <- makeContrasts(Cfz-Ctrl, levels = design_eset_34)
 eset_fit_34 <- eBayes(contrasts.fit(lmFit(eset_final[,Cells =="KMS34"],
@@ -335,7 +335,7 @@ shared_DE[1:10,]
 
 Now, we will draw a heatmap for differentially expressed gene in each set.
 
-```{r heatmap11}
+```{r heatmap11, fig.align="center", fig.height=20, fig.width=20}
 heat_table <- table_11[1:50,]
 heat_ID <- heat_table$PROBEID
 heat_set <- eset_final[heat_ID,]
@@ -346,12 +346,12 @@ row.names(exprs_11) <- heat_table$SYMBOL
 pheatmap(exprs_11,
          annotation_col = heat_set@phenoData@data[,c("Cells", "Treatments")],
          scale = "row",
-         cutree_rows = 4, cutree_cols = 4,
+         cutree_rows = 4, cutree_cols = 4, fontsize = 14,
          main = "Clustering heatmap of KMS11 Cfz vs. Ctrl")
 rm(exprs_11)
 ```
 
-```{r heatmap34}
+```{r heatmap34, fig.align="center", fig.height=20, fig.width=20}
 heat_table <- table_34[1:50,]
 heat_ID <- heat_table$PROBEID
 heat_set <- eset_final[heat_ID,]
@@ -362,7 +362,7 @@ row.names(exprs_34) <- heat_table$SYMBOL
 pheatmap(exprs_34,
          annotation_col = heat_set@phenoData@data[,c("Cells", "Treatments")],
          scale = "row",
-         cutree_rows = 4, cutree_cols = 4,
+         cutree_rows = 4, cutree_cols = 4, fontsize = 14,
          main = "Clustering heatmap of KMS34 Cfz vs. Ctrl")
 rm(heat_table, heat_ID, heat_set, exprs_34)
 ```
@@ -394,7 +394,7 @@ length(back_genes34)
 The intersect = 0 confirmes that the back_genes are not included in selected DE genes. 
 To check whether the background genes are not biased for the gene enrichment analysis, we will creat a multidensity plot, where the mean expression is plotted on the x-axis, and check for the similarity of the distribution of back-genes and fore-genes.
 
-```{r multiDensity_11}
+```{r multiDensity_11, fig.align="center"}
 multidensity(list(
   all = table_11[,"AveExpr"],
   fore = table_11[selected_11, "AveExpr"],
@@ -404,7 +404,7 @@ multidensity(list(
   main = "DE genes for KMS11-background-matching")
 ```
 
-```{r multiDensity_34}
+```{r multiDensity_34, fig.align="center"}
 multidensity(list(
   all = table_34[,"AveExpr"],
   fore = table_34[selected_34, "AveExpr"],
@@ -475,7 +475,7 @@ res_top_GO_34$sig_genes <- sapply(genes_top_GO_34, function(x){
 ```
 
 Now we can look at top terms of GO analysis
-```{r GOplot}
+```{r GOplot, fig.align="center"}
 res_top_GO_11 %>% 
      top_n(10, wt=1/as.numeric(Fisher.elim)) %>% 
      mutate(hitsPerc=Significant*100/Annotated) %>% 
@@ -487,9 +487,10 @@ res_top_GO_11 %>%
      expand_limits(x=0) +
      labs(x="Hits (%)", y="GO term", colour="p value", size="Count") + ggtitle("GO terms for KMS11")
 ```
+
 In KMS11, regulation of cellular amino acid and negative regulation of canonical Wnt signaling are at top.
 
-```{r GOplot34}
+```{r GOplot34, fig.align="center"}
 res_top_GO_34 %>% 
      top_n(10, wt=1/as.numeric(Fisher.elim)) %>% 
      mutate(hitsPerc=Significant*100/Annotated) %>% 
@@ -501,8 +502,63 @@ res_top_GO_34 %>%
      expand_limits(x=0) +
      labs(x="Hits (%)", y="GO term", colour="p value", size="Count") + ggtitle("GO terms for KMS34")
 ```
+
 In KMS34, negative regulation of IL6 and regulation of cellular response to IF gamma are at top.
 
 ## Pathway enrichment analysis using reactom
 
- 
+We will also test the enrichment of specific pathways using Reactom pathway database. To do that we need first to convert the Probe IDs ti ENTREZ identifiers. Then a hypergeometric distribution test will be applyed, which is the same as Fisher Classic test that we performed above by topGO. 
+
+
+```{r reactom}
+entrez_ids_11 <- mapIds(hgu133plus2.db, keys = rownames(table_11), keytype = "PROBEID", column = "ENTREZID")
+
+reactom_enrich_11 <- enrichPathway(gene = entrez_ids_11[selected_11],
+                                   universe = entrez_ids_11[c(selected_11, back_genes11)],
+                                   organism = "human",
+                                   pvalueCutoff = 0.05, qvalueCutoff = 0.9, readable = TRUE)
+
+reactom_enrich_11@result$Description <- paste0(str_sub(reactom_enrich_11@result$Description, 1, 30), "...")
+
+
+entrez_ids_34 <- mapIds(hgu133plus2.db, keys = rownames(table_34), keytype = "PROBEID", column = "ENTREZID")
+
+reactom_enrich_34 <- enrichPathway(gene = entrez_ids_34[selected_34],
+                                   universe = entrez_ids_34[c(selected_34, back_genes34)],
+                                   organism = "human",
+                                   pvalueCutoff = 0.05, qvalueCutoff = 0.9, readable = TRUE)
+
+reactom_enrich_34@result$Description <- paste0(str_sub(reactom_enrich_34@result$Description, 1, 30), "...")
+
+#head(as.data.frame(reactom_enrich_11))[1:6]
+#head(as.data.frame(reactom_enrich_34))[1:6]
+                                               
+```
+
+
+Here we see the pathways related to the GO terms that we performed before.
+
+```{r reactomPlot11, fig.align="center"}
+barplot(reactom_enrich_11, title = " Pathways in KMS11")
+
+emapplot(reactom_enrich_11, showCategory = 10)
+```
+
+```{r reactomPlot34, fig.align="center"}
+barplot(reactom_enrich_34, title = " Pathways in KMS34")
+
+emapplot(reactom_enrich_34, showCategory = 10)
+```
+
+## Conclusion
+Here we analyzed the microarray data, that have been published by Riz I, et al on Oncotarget (PMID: 26109433). We didn't aim to compare the results to the original paper. The important point here was to mention that the data is constructed of two main factors, the cell lines and treatment. Thus the analysis strategy is important, when we are going to define the contrasts for differential gene expression analysis. One can do a joint contrast, but the result might not be trustable.
+We could see clearly that the two cell lines behave differently in response to the anti cancer drug. Their expression profile, as well as activated pathways are different.
+
+## Session Information
+```{r info}
+gc()
+length(getLoadedDLLs())
+sessionInfo()
+```
+
+
